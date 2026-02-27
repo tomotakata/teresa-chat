@@ -102,6 +102,7 @@ export interface GenerateOptions {
   threshold?: number
   stream?: boolean
   docIds?: string[]
+  precomputedEmbedding?: number[]
 }
 
 export interface Message {
@@ -142,11 +143,29 @@ export async function generateResponse(options: GenerateOptions): Promise<string
     topK = 5,
     threshold = 0.0,
     docIds,
+    precomputedEmbedding,
   } = options
 
   const supabase = createServiceClient()
 
-  const chunks = await retrieveChunks({ tenantId, query: userMessage, topK, threshold, docIds })
+  // embedding済みなら再利用、なければ新規生成（失敗時は空チャンク）
+  let chunks: RetrievedChunk[] = []
+  try {
+    if (precomputedEmbedding && precomputedEmbedding.length > 0) {
+      const { data, error } = await supabase.rpc('match_chunks', {
+        query_embedding: `[${precomputedEmbedding.join(',')}]`,
+        match_tenant_id: tenantId,
+        match_count: topK,
+        match_threshold: threshold,
+        match_doc_ids: docIds && docIds.length > 0 ? docIds : null,
+      })
+      if (!error) chunks = (data ?? []) as RetrievedChunk[]
+    } else {
+      chunks = await retrieveChunks({ tenantId, query: userMessage, topK, threshold, docIds })
+    }
+  } catch (e) {
+    console.error('[RAG] chunk retrieval failed:', e instanceof Error ? e.message : String(e))
+  }
 
   const { data: historyData } = await supabase
     .from('messages')

@@ -57,6 +57,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
   const systemPrompt = aiSettings?.system_prompt ?? 'あなたは親切なカスタマーサポートアシスタントです。'
 
   try {
+    // Step 1: embedding
+    let embedding: number[] = []
+    try {
+      const { createEmbedding } = await import('@/lib/openai')
+      embedding = await createEmbedding(message)
+    } catch (embErr) {
+      console.error('[send] embedding error:', embErr instanceof Error ? embErr.message : String(embErr))
+      // embedding失敗時はRAGなしで続行
+    }
+
     const reply = await generateResponse({
       tenantId: project.tenant_id,
       conversationId: convId,
@@ -67,6 +77,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       topK: aiSettings?.top_k,
       threshold: aiSettings?.similarity_threshold,
       docIds: (project.doc_ids as string[] | null) ?? [],
+      precomputedEmbedding: embedding.length > 0 ? embedding : undefined,
     })
 
     const suggested_questions = await generateSuggestedQuestions(message, reply, systemPrompt)
@@ -74,7 +85,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     return NextResponse.json({ reply, conversation_id: convId, suggested_questions })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error('[send] generateResponse error:', msg)
+    console.error('[send] error:', msg)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
