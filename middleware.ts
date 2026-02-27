@@ -27,7 +27,7 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl
 
-  const publicPaths = ['/login', '/api/webhooks', '/api/chat', '/widget']
+  const publicPaths = ['/login', '/api/webhooks', '/api/chat', '/chat', '/api/customer', '/api/projects/by-slug', '/widget']
   const isPublic = publicPaths.some(p => pathname.startsWith(p))
 
   if (!user && !isPublic) {
