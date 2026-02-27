@@ -129,8 +129,8 @@ export default function ChatRoomPage() {
       setMessages(prev => [
         ...prev,
         {
-          role: 'assistant',
-          content: data.reply,
+          role: 'assistant' as const,
+          content: data.reply ?? '',
           suggested_questions: Array.isArray(data.suggested_questions) ? data.suggested_questions : [],
         },
       ])
