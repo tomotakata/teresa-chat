@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { generateResponse, generateSuggestedQuestions } from '@/lib/rag'
 
+export const maxDuration = 60
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   const { slug: rawSlug } = await params
   const slug = decodeURIComponent(rawSlug)

@@ -112,12 +112,14 @@ export default function ChatRoomPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMsg, conversation_id: convId, session_token: sessionToken }),
       })
-      const data = await res.json()
 
       // 既読に更新
       setMessages(prev => prev.map((m, i) =>
         i === userMsgIndex ? { ...m, status: 'read' } : m
       ))
+
+      let data: { reply?: string; conversation_id?: string; suggested_questions?: string[]; error?: string } = {}
+      try { data = await res.json() } catch { data = { error: `サーバーエラー (${res.status})` } }
 
       if (!res.ok) {
         setMessages(prev => [...prev, { role: 'assistant', content: `エラー: ${data.error ?? res.status}` }])
