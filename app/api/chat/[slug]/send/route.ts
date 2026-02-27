@@ -18,10 +18,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
   if (!message) return NextResponse.json({ error: 'Message required' }, { status: 400 })
   if (!session_token) return NextResponse.json({ error: 'session_token required' }, { status: 400 })
 
-  // 匿名セッション取得
-  const { data: anonSession } = await serviceClient
+  // 匿名セッション取得 or 自動作成
+  let { data: anonSession } = await serviceClient
     .from('anonymous_sessions').select('id, customer_id').eq('session_token', session_token).single()
-  if (!anonSession) return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
+  if (!anonSession) {
+    const { data: newSession } = await serviceClient
+      .from('anonymous_sessions')
+      .insert({ session_token, project_id: project.id })
+      .select('id, customer_id').single()
+    anonSession = newSession
+  }
+  if (!anonSession) return NextResponse.json({ error: 'Failed to create session' }, { status: 500 })
 
   // 会話の取得または作成
   let convId: string = conversation_id
