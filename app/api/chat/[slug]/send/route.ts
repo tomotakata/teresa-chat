@@ -47,19 +47,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 
   const systemPrompt = aiSettings?.system_prompt ?? 'あなたは親切なカスタマーサポートアシスタントです。'
 
-  const reply = await generateResponse({
-    tenantId: project.tenant_id,
-    conversationId: convId,
-    userMessage: message,
-    systemPrompt,
-    temperature: aiSettings?.temperature,
-    maxTokens: aiSettings?.max_tokens,
-    topK: aiSettings?.top_k,
-    threshold: aiSettings?.similarity_threshold,
-    docIds: (project.doc_ids as string[] | null) ?? [],
-  })
+  try {
+    const reply = await generateResponse({
+      tenantId: project.tenant_id,
+      conversationId: convId,
+      userMessage: message,
+      systemPrompt,
+      temperature: aiSettings?.temperature,
+      maxTokens: aiSettings?.max_tokens,
+      topK: aiSettings?.top_k,
+      threshold: aiSettings?.similarity_threshold,
+      docIds: (project.doc_ids as string[] | null) ?? [],
+    })
 
-  const suggested_questions = await generateSuggestedQuestions(message, reply, systemPrompt)
+    const suggested_questions = await generateSuggestedQuestions(message, reply, systemPrompt)
 
-  return NextResponse.json({ reply, conversation_id: convId, suggested_questions })
+    return NextResponse.json({ reply, conversation_id: convId, suggested_questions })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[send] generateResponse error:', msg)
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 }

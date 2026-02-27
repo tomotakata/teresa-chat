@@ -120,7 +120,7 @@ export default function ChatRoomPage() {
       ))
 
       if (!res.ok) {
-        setMessages(prev => [...prev, { role: 'assistant', content: `エラー: ${data.error}` }])
+        setMessages(prev => [...prev, { role: 'assistant', content: `エラー: ${data.error ?? res.status}` }])
         return
       }
       if (data.conversation_id) setConvId(data.conversation_id)
