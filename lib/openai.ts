@@ -1,6 +1,8 @@
 import Groq from 'groq-sdk'
+import OpenAI from 'openai'
 
 let _groq: Groq | null = null
+let _openai: OpenAI | null = null
 
 export function getGroq(): Groq {
   if (!_groq) {
@@ -9,31 +11,21 @@ export function getGroq(): Groq {
   return _groq
 }
 
-// Keep getOpenAI as a stub so existing imports don't break
-export function getOpenAI() {
-  return getGroq() as unknown as import('openai').default
-}
-
-// Local embedding using @xenova/transformers (no API key needed)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _embedder: any = null
-
-async function getEmbedder() {
-  if (!_embedder) {
-    const { pipeline } = await import('@xenova/transformers')
-    _embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2')
+export function getOpenAI(): OpenAI {
+  if (!_openai) {
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return _embedder as (texts: string[], options?: Record<string, unknown>) => Promise<{ data: Float32Array }>
+  return _openai
 }
 
 export async function createEmbedding(text: string): Promise<number[]> {
-  const embedder = await getEmbedder()
-  // result is a Tensor with shape [1, 384]; result.data is a flat Float32Array
-  const result = await embedder([text.slice(0, 512)], { pooling: 'mean', normalize: true })
-  const arr = Array.from(result.data as Float32Array)
-  if (arr.length === 0) throw new Error('Embedding returned empty array')
-  return arr
+  const openai = getOpenAI()
+  const res = await openai.embeddings.create({
+    model: 'text-embedding-3-small',
+    input: text.slice(0, 8000),
+    dimensions: 384,
+  })
+  return res.data[0].embedding
 }
 
 export async function createChatCompletion(
