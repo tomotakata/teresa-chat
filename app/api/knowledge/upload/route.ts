@@ -2,13 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { ingestDocument } from '@/lib/rag'
+import { scrapeUrl } from '@/lib/url-scraper'
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { data: userData } = await supabase
+  const serviceClient = createServiceClient()
+
+  const { data: userData } = await serviceClient
     .from('users')
     .select('tenant_id')
     .eq('id', user.id)
@@ -20,19 +23,22 @@ export async function POST(req: NextRequest) {
   const formData = await req.formData()
   const file = formData.get('file') as File | null
   const text = formData.get('text') as string | null
+  const urlInput = formData.get('url') as string | null
   const title = formData.get('title') as string | null
 
   if (!title) return NextResponse.json({ error: 'Title is required' }, { status: 400 })
-  if (!file && !text) return NextResponse.json({ error: 'File or text required' }, { status: 400 })
-
-  const serviceClient = createServiceClient()
+  if (!file && !text && !urlInput) {
+    return NextResponse.json({ error: 'File, text, or URL required' }, { status: 400 })
+  }
+  const docType = file ? 'pdf' : urlInput ? 'url' : 'text'
 
   const { data: doc, error: docError } = await serviceClient
     .from('knowledge_docs')
     .insert({
       tenant_id: tenantId,
       title,
-      type: file ? 'pdf' : 'text',
+      type: docType,
+      storage_path: urlInput ?? null,
       status: 'processing',
     })
     .select('id')
@@ -44,17 +50,18 @@ export async function POST(req: NextRequest) {
 
   try {
     let fileBuffer: Buffer | undefined
+    let contentText: string | undefined = text ?? undefined
+
+    // PDF処理
     if (file) {
       const arrayBuffer = await file.arrayBuffer()
       fileBuffer = Buffer.from(arrayBuffer)
-
       const { error: storageError } = await serviceClient.storage
         .from('knowledge-files')
         .upload(`${tenantId}/${doc.id}/${file.name}`, fileBuffer, {
           contentType: file.type,
           upsert: true,
         })
-
       if (!storageError) {
         await serviceClient
           .from('knowledge_docs')
@@ -63,24 +70,44 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // URL スクレイピング処理
+    if (urlInput) {
+      const urls = urlInput
+        .split('\n')
+        .map(u => u.trim())
+        .filter(u => u.startsWith('http'))
+
+      if (urls.length === 0) {
+        throw new Error('有効なURLが入力されていません')
+      }
+
+      const scraped = []
+      for (const url of urls) {
+        const result = await scrapeUrl(url)
+        scraped.push(`=== ${result.title} (${url}) ===\n${result.description}\n\n${result.text}`)
+      }
+      contentText = scraped.join('\n\n---\n\n')
+    }
+
     const chunkCount = await ingestDocument({
       tenantId,
       docId: doc.id,
       title,
-      type: file ? 'pdf' : 'text',
-      content: text ?? undefined,
+      type: docType as 'pdf' | 'text',
+      content: contentText,
       fileBuffer,
     })
 
     return NextResponse.json({ ok: true, docId: doc.id, chunkCount })
   } catch (err) {
+    console.error('[upload] ingest error:', err)
     await serviceClient
       .from('knowledge_docs')
       .update({ status: 'error' })
       .eq('id', doc.id)
 
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Ingest failed' },
+      { error: err instanceof Error ? err.message : String(err) },
       { status: 500 }
     )
   }

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { data: userData } = await supabase
+  const serviceClient = createServiceClient()
+  const { data: userData } = await serviceClient
     .from('users')
     .select('tenant_id')
     .eq('id', user.id)
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest) {
   const limit = 20
   const offset = (page - 1) * limit
 
-  let query = supabase
+  let query = serviceClient
     .from('conversations')
     .select('id, channel, channel_user_id, channel_user_name, status, created_at, updated_at', { count: 'exact' })
     .eq('tenant_id', userData.tenant_id)
@@ -43,7 +44,8 @@ export async function PATCH(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { error } = await supabase
+  const serviceClient = createServiceClient()
+  const { error } = await serviceClient
     .from('conversations')
     .update({ status, escalated_to })
     .eq('id', id)

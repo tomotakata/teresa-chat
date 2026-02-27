@@ -1,10 +1,11 @@
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: userData } = await supabase
+  const serviceClient = createServiceClient()
+  const { data: userData } = await serviceClient
     .from('users')
     .select('tenant_id')
     .eq('id', user!.id)

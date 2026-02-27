@@ -1,11 +1,12 @@
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import ChannelSettingsClient from './ChannelSettingsClient'
 
 export default async function ChannelsPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: userData } = await supabase
+  const serviceClient = createServiceClient()
+  const { data: userData } = await serviceClient
     .from('users')
     .select('tenant_id')
     .eq('id', user!.id)
@@ -13,16 +14,16 @@ export default async function ChannelsPage() {
 
   const tenantId = userData?.tenant_id ?? ''
 
-  const { data: channels } = await supabase
+  const { data: channels } = await serviceClient
     .from('channels')
     .select('*')
     .eq('tenant_id', tenantId)
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://your-domain.com'
-  const widgetEmbedCode = `<!-- FonDesk AI チャットウィジェット -->
+  const widgetEmbedCode = `<!-- Teresa チャットウィジェット -->
 <script>
-  window.FONDESK_TENANT_ID = "${tenantId}";
-  window.FONDESK_API_URL = "${appUrl}";
+  window.TERESA_TENANT_ID = "${tenantId}";
+  window.TERESA_API_URL = "${appUrl}";
 </script>
 <script src="${appUrl}/widget.js" defer></script>`
 

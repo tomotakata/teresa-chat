@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -14,13 +14,14 @@ export default async function KnowledgePage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: userData } = await supabase
+  const serviceClient = createServiceClient()
+  const { data: userData } = await serviceClient
     .from('users')
     .select('tenant_id')
     .eq('id', user!.id)
     .single()
 
-  const { data: docs } = await supabase
+  const { data: docs } = await serviceClient
     .from('knowledge_docs')
     .select('id, title, type, status, chunk_count, created_at')
     .eq('tenant_id', userData?.tenant_id)
@@ -61,7 +62,9 @@ export default async function KnowledgePage() {
                 return (
                   <tr key={doc.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 font-medium text-gray-900">{doc.title}</td>
-                    <td className="px-6 py-4 text-gray-500 uppercase">{doc.type}</td>
+                    <td className="px-6 py-4 text-gray-500">
+                      {doc.type === 'pdf' ? '📄 PDF' : doc.type === 'url' ? '🌐 URL' : '📝 テキスト'}
+                    </td>
                     <td className="px-6 py-4">
                       <Badge variant={s.variant}>{s.label}</Badge>
                     </td>

@@ -1,5 +1,5 @@
 import { createServiceClient } from './supabase/server'
-import { createEmbedding, getOpenAI } from './openai'
+import { createEmbedding, createChatCompletion, createChatStream } from './openai'
 import { chunkText } from './chunker'
 import { parsePdf } from './pdf-parser'
 
@@ -39,8 +39,13 @@ export async function ingestDocument(options: IngestOptions): Promise<number> {
     })
   }
 
-  const { error } = await supabase.from('knowledge_chunks').insert(rows)
-  if (error) throw new Error(error.message)
+  // バッチ分割して挿入（Supabase の 2MB 制限対策）
+  const BATCH_SIZE = 20
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const batch = rows.slice(i, i + BATCH_SIZE)
+    const { error } = await supabase.from('knowledge_chunks').insert(batch)
+    if (error) throw new Error(error.message)
+  }
 
   await supabase
     .from('knowledge_docs')
@@ -55,6 +60,7 @@ export interface RetrieveOptions {
   query: string
   topK?: number
   threshold?: number
+  docIds?: string[]
 }
 
 export interface RetrievedChunk {
@@ -65,7 +71,7 @@ export interface RetrievedChunk {
 }
 
 export async function retrieveChunks(options: RetrieveOptions): Promise<RetrievedChunk[]> {
-  const { tenantId, query, topK = 5, threshold = 0.7 } = options
+  const { tenantId, query, topK = 5, threshold = 0.0, docIds } = options
   const supabase = createServiceClient()
 
   const embedding = await createEmbedding(query)
@@ -75,7 +81,10 @@ export async function retrieveChunks(options: RetrieveOptions): Promise<Retrieve
     match_tenant_id: tenantId,
     match_count: topK,
     match_threshold: threshold,
+    match_doc_ids: docIds && docIds.length > 0 ? docIds : null,
   })
+
+  console.log('[RAG] retrieve chunks:', { tenantId, query: query.slice(0, 30), docIds: docIds?.length ?? 0, found: data?.length ?? 0, error: error?.message })
 
   if (error) throw new Error(error.message)
   return (data ?? []) as RetrievedChunk[]
@@ -92,11 +101,34 @@ export interface GenerateOptions {
   topK?: number
   threshold?: number
   stream?: boolean
+  docIds?: string[]
 }
 
 export interface Message {
   role: 'user' | 'assistant'
   content: string
+}
+
+export async function generateSuggestedQuestions(
+  userMessage: string,
+  assistantReply: string,
+  systemPrompt: string
+): Promise<string[]> {
+  const prompt = `以下の会話の流れを踏まえて、ユーザーが次に聞きそうな質問を日本語で3つ、短く提案してください。
+JSON配列のみで返してください。例: ["質問1", "質問2", "質問3"]
+
+ユーザーの質問: ${userMessage}
+AIの回答: ${assistantReply.slice(0, 300)}`
+
+  try {
+    const result = await createChatCompletion([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt },
+    ], { temperature: 0.5, maxTokens: 200 })
+    const match = result.match(/\[[\s\S]*\]/)
+    if (match) return JSON.parse(match[0]) as string[]
+  } catch {}
+  return []
 }
 
 export async function generateResponse(options: GenerateOptions): Promise<string> {
@@ -105,16 +137,16 @@ export async function generateResponse(options: GenerateOptions): Promise<string
     conversationId,
     userMessage,
     systemPrompt = 'あなたは親切なカスタマーサポートアシスタントです。',
-    model = 'gpt-4o',
     temperature = 0.3,
     maxTokens = 1000,
     topK = 5,
-    threshold = 0.7,
+    threshold = 0.0,
+    docIds,
   } = options
 
   const supabase = createServiceClient()
 
-  const chunks = await retrieveChunks({ tenantId, query: userMessage, topK, threshold })
+  const chunks = await retrieveChunks({ tenantId, query: userMessage, topK, threshold, docIds })
 
   const { data: historyData } = await supabase
     .from('messages')
@@ -131,20 +163,13 @@ export async function generateResponse(options: GenerateOptions): Promise<string
         chunks.map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n')
       : ''
 
-  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: 'system', content: systemPrompt + contextText },
+  const messages = [
+    { role: 'system' as const, content: systemPrompt + contextText },
     ...history.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    { role: 'user', content: userMessage },
+    { role: 'user' as const, content: userMessage },
   ]
 
-  const completion = await getOpenAI().chat.completions.create({
-    model,
-    messages,
-    temperature,
-    max_tokens: maxTokens,
-  })
-
-  const reply = completion.choices[0].message.content ?? ''
+  const reply = await createChatCompletion(messages, { temperature, maxTokens })
 
   await supabase.from('messages').insert([
     { conversation_id: conversationId, role: 'user', content: userMessage },
@@ -163,15 +188,15 @@ export async function generateStreamResponse(
     conversationId,
     userMessage,
     systemPrompt = 'あなたは親切なカスタマーサポートアシスタントです。',
-    model = 'gpt-4o',
     temperature = 0.3,
     maxTokens = 1000,
     topK = 5,
-    threshold = 0.7,
+    threshold = 0.0,
+    docIds,
   } = options
 
   const supabase = createServiceClient()
-  const chunks = await retrieveChunks({ tenantId, query: userMessage, topK, threshold })
+  const chunks = await retrieveChunks({ tenantId, query: userMessage, topK, threshold, docIds })
 
   const { data: historyData } = await supabase
     .from('messages')
@@ -188,27 +213,18 @@ export async function generateStreamResponse(
         chunks.map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n')
       : ''
 
-  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: 'system', content: systemPrompt + contextText },
+  const messages2 = [
+    { role: 'system' as const, content: systemPrompt + contextText },
     ...history.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    { role: 'user', content: userMessage },
+    { role: 'user' as const, content: userMessage },
   ]
 
-  const stream = await getOpenAI().chat.completions.create({
-    model,
-    messages,
-    temperature,
-    max_tokens: maxTokens,
-    stream: true,
-  })
+  const streamIterable = await createChatStream(messages2, { temperature, maxTokens })
 
   let fullReply = ''
-  for await (const chunk of stream) {
-    const text = chunk.choices[0]?.delta?.content ?? ''
-    if (text) {
-      fullReply += text
-      onChunk(text)
-    }
+  for await (const text of streamIterable) {
+    fullReply += text
+    onChunk(text)
   }
 
   await supabase.from('messages').insert([
@@ -219,5 +235,4 @@ export async function generateStreamResponse(
   return fullReply
 }
 
-// Import for type reference
-import type OpenAI from 'openai'
+

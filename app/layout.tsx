@@ -9,7 +9,7 @@ const geistSans = Geist({
 })
 
 export const metadata: Metadata = {
-  title: "FonDesk AI - AIカスタマーサポート",
+  title: "Teresa - AIカスタマーサポート",
   description: "AIを活用した自動カスタマーサポートプラットフォーム",
 }
 

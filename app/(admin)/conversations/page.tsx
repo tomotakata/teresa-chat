@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import ConversationFilters from './ConversationFilters'
@@ -24,7 +24,8 @@ export default async function ConversationsPage({
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: userData } = await supabase
+  const serviceClient = createServiceClient()
+  const { data: userData } = await serviceClient
     .from('users')
     .select('tenant_id')
     .eq('id', user!.id)
