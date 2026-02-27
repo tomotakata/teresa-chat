@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ['@xenova/transformers'],
-  turbopack: {},
+  serverExternalPackages: ['pdf-parse'],
 };
 
 export default nextConfig;
+
