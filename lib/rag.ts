@@ -1,5 +1,5 @@
 import { createServiceClient } from './supabase/server'
-import { createEmbedding, createChatCompletion, createChatStream } from './openai'
+import { createChatCompletion, createChatStream } from './openai'
 import { chunkText } from './chunker'
 import { parsePdf } from './pdf-parser'
 
@@ -29,12 +29,11 @@ export async function ingestDocument(options: IngestOptions): Promise<number> {
 
   const rows = []
   for (const chunk of chunks) {
-    const embedding = await createEmbedding(chunk.content)
     rows.push({
       doc_id: docId,
       tenant_id: tenantId,
       content: chunk.content,
-      embedding: `[${embedding.join(',')}]`,
+      embedding: null,
       metadata: chunk.metadata,
     })
   }
@@ -71,23 +70,45 @@ export interface RetrievedChunk {
 }
 
 export async function retrieveChunks(options: RetrieveOptions): Promise<RetrievedChunk[]> {
-  const { tenantId, query, topK = 5, threshold = 0.0, docIds } = options
+  const { tenantId, query, topK = 5, docIds } = options
   const supabase = createServiceClient()
 
-  const embedding = await createEmbedding(query)
+  // キーワード全文検索（OpenAI不要）
+  const keywords = query
+    .replace(/[^\w\u3000-\u9fff\u30a0-\u30ff\u3040-\u309f]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 1)
+    .slice(0, 8)
 
-  const { data, error } = await supabase.rpc('match_chunks', {
-    query_embedding: `[${embedding.join(',')}]`,
-    match_tenant_id: tenantId,
-    match_count: topK,
-    match_threshold: threshold,
-    match_doc_ids: docIds && docIds.length > 0 ? docIds : null,
-  })
+  if (keywords.length === 0) return []
 
-  console.log('[RAG] retrieve chunks:', { tenantId, query: query.slice(0, 30), docIds: docIds?.length ?? 0, found: data?.length ?? 0, error: error?.message })
+  let queryBuilder = supabase
+    .from('knowledge_chunks')
+    .select('id, content, metadata')
+    .eq('tenant_id', tenantId)
+    .or(keywords.map(k => `content.ilike.%${k}%`).join(','))
+    .limit(topK * 3)
+
+  if (docIds && docIds.length > 0) {
+    queryBuilder = queryBuilder.in('doc_id', docIds)
+  }
+
+  const { data, error } = await queryBuilder
+
+  console.log('[RAG] text search:', { query: query.slice(0, 30), keywords, found: data?.length ?? 0, error: error?.message })
 
   if (error) throw new Error(error.message)
-  return (data ?? []) as RetrievedChunk[]
+
+  // スコアリング: マッチしたキーワード数で並び替え
+  const scored = (data ?? []).map(row => {
+    const lc = row.content.toLowerCase()
+    const score = keywords.filter(k => lc.includes(k.toLowerCase())).length / keywords.length
+    return { ...row, similarity: score, metadata: (row.metadata ?? {}) as Record<string, unknown> }
+  })
+
+  return scored
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, topK)
 }
 
 export interface GenerateOptions {
@@ -148,21 +169,10 @@ export async function generateResponse(options: GenerateOptions): Promise<string
 
   const supabase = createServiceClient()
 
-  // embedding済みなら再利用、なければ新規生成（失敗時は空チャンク）
+  // キーワード全文検索でチャンク取得
   let chunks: RetrievedChunk[] = []
   try {
-    if (precomputedEmbedding && precomputedEmbedding.length > 0) {
-      const { data, error } = await supabase.rpc('match_chunks', {
-        query_embedding: `[${precomputedEmbedding.join(',')}]`,
-        match_tenant_id: tenantId,
-        match_count: topK,
-        match_threshold: threshold,
-        match_doc_ids: docIds && docIds.length > 0 ? docIds : null,
-      })
-      if (!error) chunks = (data ?? []) as RetrievedChunk[]
-    } else {
-      chunks = await retrieveChunks({ tenantId, query: userMessage, topK, threshold, docIds })
-    }
+    chunks = await retrieveChunks({ tenantId, query: userMessage, topK, threshold, docIds })
   } catch (e) {
     console.error('[RAG] chunk retrieval failed:', e instanceof Error ? e.message : String(e))
   }
